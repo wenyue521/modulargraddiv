@@ -1,0 +1,339 @@
+
+
+real epsi = 1.0e-6;
+
+real Nu = 0.4                                              ;
+real beta = 0.1;
+real T = 8.;
+
+
+real D=0.1, H=0.41;
+real cx0 = 0.2, cy0 = 0.2; 
+real xa = 0.15, ya=0.2, xe = 0.25,ye =0.2;
+border fr1(t=0,2.2){x=t; y=0; label=1;}
+border fr2(t=0,H){x=2.2; y=t; label=2;}
+border fr3(t=2.2,0){x=t; y=H; label=1;}
+border fr4(t=H,0){x=0; y=t; label=4;}
+border fr5(t=2*pi,0){x=cx0+D*sin(t)/2; y=cy0+D*cos(t)/2; label=3;}
+int nn=30;
+ 
+mesh Th=buildmesh(fr1(5*nn)+fr2(nn)+fr3(5*nn)+fr4(nn)+fr5(-nn*3));
+plot(Th);
+real Um= 1.5;
+func Ub = Um*2./3.; 
+real nu = 1e-3; 
+real Rey = Ub*D/nu; 
+func real U1ee(real t){
+ return  sin(pi*t/8)*4.*Um*y*(H-y)/(H*H);
+}
+
+func U2 = 0. ;
+
+
+fespace Vh(Th,P2); 
+fespace Mh(Th,P1);
+int numdof = Vh.ndof + Mh.ndof;
+Vh u1,u2,uu1,uu2,uuu1,uuu2;
+Vh u01,u02;
+Vh v1,v2;
+Vh u1old, u2old;
+Vh bu1,bu2;
+
+Mh p,p0,pCor,q;
+Mh pold;
+Mh bp;
+
+Mh vd1 = 0,vd2 =0;
+int nub = Th.nbe;
+for(int i =0; i< nub; i++){
+for(int j = 0;j<2;j++){
+int nue = Th.be(i)[j];
+if(Th.be(i)[j].label == 3){
+vd1[][nue] = 1;
+}
+}
+}
+
+plot(vd1);
+
+Mh vl1 = 0,vl2 = 0;
+for(int i =0; i< nub; i++){
+for(int j = 0;j<2;j++){
+int nue = Th.be(i)[j];
+if(Th.be(i)[j].label == 3){
+vl2[][nue] = 1;
+}
+}
+}
+plot(vl2); 
+
+real dt = 0.00025;
+int ndt = T/dt;
+
+ofstream outDrag(+dt+"Nu="+Nu+"beta="+beta+"nn="+nn+"numdof="+numdof+"Drag="+T+".txt");
+ofstream outLift(+dt+"Nu="+Nu+"beta="+beta+"nn="+nn+"numdof="+numdof+"Lift="+T+".txt");
+ofstream outP(+dt+"Nu="+Nu+"beta="+beta+"nn="+nn+"numdof="+numdof+"pressure="+T+".txt");
+
+ofstream tec5(+dt+"t="+5+"N="+nn+"numdof"+numdof+"velocity.dat");
+ofstream tecp5(+dt+"t="+5+"N="+nn+"numdof"+numdof+"Pressure.dat");
+
+ofstream tec6(+dt+"t="+6+"N="+nn+"numdof"+numdof+"velocity.dat");
+ofstream tecp6(+dt+"t="+6+"N="+nn+"numdof"+numdof+"Pressure.dat");
+
+ofstream tec7(+dt+"t="+7+"N="+nn+"numdof"+numdof+"velocity.dat");
+ofstream tecp7(+dt+"t="+7+"N="+nn+"numdof"+numdof+"Pressure.dat");
+
+ofstream tec8(+dt+"t="+8+"N="+nn+"numdof"+numdof+"velocity.dat");
+ofstream tecp8(+dt+"t="+8+"N="+nn+"numdof"+numdof+"Pressure.dat");
+
+
+u01 = 0; u02 = 0;
+u1old = 0; u2old =0;
+p0 = 0;
+pold = 0;
+
+real cpu1 = clock();
+real t = 0;
+
+real[int] drag(ndt);
+real[int] lift(ndt);
+real[int] pressure(ndt);
+
+for(int k =1;k<=ndt;k++){
+t = k*dt;
+
+func U1 = sin(pi*t/8)*4.*Um*y*(H-y)/(H*H);
+
+
+problem proMgdu1(uu1,v1,solver = UMFPACK) = 
+   int2d(Th)(1./dt *(uu1*v1))
+   +int2d(Th)(nu *( dx(uu1)*dx(v1) + dy(uu1)*dy(v1) ))
+   +int2d(Th)( (u01*dx(uu1) + u02*dy(uu1))*v1 )
+   +int2d(Th)( 1./2 *(dx(u01) + dy(u02))*uu1*v1 )
+   -int2d(Th)( 1./dt *(u1old*v1) )
+   +int2d(Th)(dx(pold) * v1 )
+   +on(1,3,uu1 = 0)
+
+   +on(2,4,uu1 = U1)
+   ;
+
+problem proMgdu2(uu2,v1,solver = UMFPACK) = 
+   int2d(Th)(1./dt *(uu2*v1))
+   +int2d(Th)(nu *( dx(uu2)*dx(v1) + dy(uu2)*dy(v1) ))
+   +int2d(Th)( (u01*dx(uu2) + u02*dy(uu2))*v1 )
+   +int2d(Th)( 1./2 *(dx(u01) + dy(u02))*uu2*v1 )
+   -int2d(Th)( 1./dt *(u2old*v1) )
+   +int2d(Th)(dy(pold) * v1 )
+   +on(1,2,3,4,uu2 = 0)
+   ;
+
+
+
+
+problem proMgdp(p,q,solver = UMFPACK) = 
+   int2d(Th)( dx(p)*dx(q) + dy(p)*dy(q) )
+   -int2d(Th)( dx(pold)*dx(q) + dy(pold)*dy(q) )
+   +int2d(Th)(1./dt *( dx(uuu1) + dy(uuu2) )*q )
+   ;
+
+
+problem proMgdendu([uuu1,uuu2],[v1,v2], solver = UMFPACK ) = 
+   int2d(Th)( uuu1*v1 + uuu2*v2 )
+   +int2d(Th)( (beta + Nu*dt)*(dx(uuu1)*dx(v1) + dy(uuu2)*dx(v1) + dx(uuu1)*dy(v2) + dy(uuu2)*dy(v2)) )
+   -int2d(Th)( uu1*v1 + uu2*v2 )
+   -int2d(Th)( beta*(dx(u01)*dx(v1) + dy(u02)*dx(v1) + dx(u01)*dy(v2) + dy(u02)*dy(v2)) )
+   +on(1,3,uuu1 = 0,uuu2 = 0)
+   +on(2,4,uuu1 = U1,uuu2 = 0)
+   ;
+
+
+proMgdu1;
+proMgdu2;
+proMgdendu;
+proMgdp;
+
+u1 = uuu1 - dt*dx(p) + dt*dx(pold);
+u2 = uuu2 - dt*dy(p) + dt*dy(pold); 
+
+
+u1old = u1;
+u2old = u2;
+u01 = uuu1;
+u02 = uuu2;
+pold = p;
+
+
+if(t == 5){
+tec5<<"Title="<<"Velocity"<<endl;
+tec5<<"Variables="<<"X"<<","<<"Y"<<","<<"U"<<","<<"V"<<endl;
+tec5<<"Zone"<<"   "<<"N="<<Th.nv<<","<<"E="<<Th.nt<<","<<"F=FEPOINT,ET=TRIANGLE"<<endl;
+
+
+tecp5<<"Title="<<"Pressure"<<endl;
+tecp5<<"Variables="<<"X"<<","<<"Y"<<","<<"P"<<endl;
+tecp5<<"Zone"<<"   "<<"N="<<Th.nv<<","<<"E="<<Th.nt<<","<<"F=FEPOINT,ET=TRIANGLE"<<endl;
+
+int j=0;
+for(int i=0;i<Th.nv;i++)
+{
+tec5<<Th(i).x<<"   "<<Th(i).y<<"   "<<u1(Th(i).x,Th(i).y)<<"   "<<u2(Th(i).x,Th(i).y)<<endl;
+tecp5<<Th(i).x<<"   "<<Th(i).y<<"   "<<p(Th(i).x,Th(i).y)<<endl;
+}
+
+for(int i=0;i<Th.nt;i++)
+{
+
+for(j=0;j<3;j++)
+{
+tec5<<Th[i][j]+1<<"  ";
+tecp5<<Th[i][j]+1<<"  ";
+}
+
+if(j==3)
+{
+tec5<<endl;
+tecp5<<endl;
+}
+
+}
+
+
+}//结束if循环
+
+//输出速度信息
+if(t == 6){
+tec6<<"Title="<<"Velocity"<<endl;
+tec6<<"Variables="<<"X"<<","<<"Y"<<","<<"U"<<","<<"V"<<endl;
+tec6<<"Zone"<<"   "<<"N="<<Th.nv<<","<<"E="<<Th.nt<<","<<"F=FEPOINT,ET=TRIANGLE"<<endl;
+
+
+tecp6<<"Title="<<"Pressure"<<endl;
+tecp6<<"Variables="<<"X"<<","<<"Y"<<","<<"P"<<endl;
+tecp6<<"Zone"<<"   "<<"N="<<Th.nv<<","<<"E="<<Th.nt<<","<<"F=FEPOINT,ET=TRIANGLE"<<endl;
+
+int j=0;
+for(int i=0;i<Th.nv;i++)
+{
+tec6<<Th(i).x<<"   "<<Th(i).y<<"   "<<u1(Th(i).x,Th(i).y)<<"   "<<u2(Th(i).x,Th(i).y)<<endl;
+tecp6<<Th(i).x<<"   "<<Th(i).y<<"   "<<p(Th(i).x,Th(i).y)<<endl;
+}
+
+for(int i=0;i<Th.nt;i++)
+{
+
+for(j=0;j<3;j++)
+{
+tec6<<Th[i][j]+1<<"  ";
+tecp6<<Th[i][j]+1<<"  ";
+}
+
+if(j==3)
+{
+tec6<<endl;
+tecp6<<endl;
+}
+
+}
+
+
+}//结束if循环
+
+//输出速度信息
+if(t == 7){
+tec7<<"Title="<<"Velocity"<<endl;
+tec7<<"Variables="<<"X"<<","<<"Y"<<","<<"U"<<","<<"V"<<endl;
+tec7<<"Zone"<<"   "<<"N="<<Th.nv<<","<<"E="<<Th.nt<<","<<"F=FEPOINT,ET=TRIANGLE"<<endl;
+
+
+tecp7<<"Title="<<"Pressure"<<endl;
+tecp7<<"Variables="<<"X"<<","<<"Y"<<","<<"P"<<endl;
+tecp7<<"Zone"<<"   "<<"N="<<Th.nv<<","<<"E="<<Th.nt<<","<<"F=FEPOINT,ET=TRIANGLE"<<endl;
+
+int j=0;
+for(int i=0;i<Th.nv;i++)
+{
+tec7<<Th(i).x<<"   "<<Th(i).y<<"   "<<u1(Th(i).x,Th(i).y)<<"   "<<u2(Th(i).x,Th(i).y)<<endl;
+tecp7<<Th(i).x<<"   "<<Th(i).y<<"   "<<p(Th(i).x,Th(i).y)<<endl;
+}
+
+for(int i=0;i<Th.nt;i++)
+{
+
+for(j=0;j<3;j++)
+{
+tec7<<Th[i][j]+1<<"  ";
+tecp7<<Th[i][j]+1<<"  ";
+}
+
+if(j==3)
+{
+tec7<<endl;
+tecp7<<endl;
+}
+
+}
+
+
+}//结束if循环
+
+
+//输出速度信息
+if(t == 8){
+tec8<<"Title="<<"Velocity"<<endl;
+tec8<<"Variables="<<"X"<<","<<"Y"<<","<<"U"<<","<<"V"<<endl;
+tec8<<"Zone"<<"   "<<"N="<<Th.nv<<","<<"E="<<Th.nt<<","<<"F=FEPOINT,ET=TRIANGLE"<<endl;
+
+
+tecp8<<"Title="<<"Pressure"<<endl;
+tecp8<<"Variables="<<"X"<<","<<"Y"<<","<<"P"<<endl;
+tecp8<<"Zone"<<"   "<<"N="<<Th.nv<<","<<"E="<<Th.nt<<","<<"F=FEPOINT,ET=TRIANGLE"<<endl;
+
+int j=0;
+for(int i=0;i<Th.nv;i++)
+{
+tec8<<Th(i).x<<"   "<<Th(i).y<<"   "<<u1(Th(i).x,Th(i).y)<<"   "<<u2(Th(i).x,Th(i).y)<<endl;
+tecp8<<Th(i).x<<"   "<<Th(i).y<<"   "<<p(Th(i).x,Th(i).y)<<endl;
+}
+
+for(int i=0;i<Th.nt;i++)
+{
+
+for(j=0;j<3;j++)
+{
+tec8<<Th[i][j]+1<<"  ";
+tecp8<<Th[i][j]+1<<"  ";
+}
+
+if(j==3)
+{
+tec8<<endl;
+tecp8<<endl;
+}
+
+}
+
+
+}//结束if循环
+
+
+drag[k-1] = -20*int2d(Th)(nu*(dx(u1)*dx(vd1) + dy(u1)*dy(vd1)+ dx(u2)*dx(vd2) + dy(u2)*dy(vd2) ) + u1*dx(u1)*vd1 + u2*dy(u1)*vd1 + u1*dx(u2)*vd2 + u2*dy(u2)*vd2 - p*(dx(vd1) + dy(vd2))  );
+drag[k-1] = drag[k-1] -10*int2d(Th)((dx(u1) + dy(u2))*(u1*vd1 + u2*vd2 ));
+
+lift[k-1] = -20*int2d(Th)(nu*(dx(u1)*dx(vl1) + dy(u1)*dy(vl1)+ dx(u2)*dx(vl2) + dy(u2)*dy(vl2) ) + u1*dx(u1)*vl1 + u2*dy(u1)*vl1 + u1*dx(u2)*vl2 + u2*dy(u2)*vl2 - p*(dx(vl1) + dy(vl2))  );
+lift[k-1] = lift[k-1] -10*int2d(Th)((dx(u1) + dy(u2))*(u1*vl1 + u2*vl2 ));
+
+
+pressure[k-1] = p(0.15,0.2)-p(0.25,0.2);
+
+}
+
+plot(u1);
+
+for(int i=0;i<ndt;i++){
+outDrag<<drag[i]<<" ";
+outLift<<lift[i]<<" ";
+outP<<pressure[i]<<" ";
+}
+
+
+

@@ -1,0 +1,298 @@
+//这里是实现经典Projection-in-time-grad-div
+//也即是penalty-projection
+//主要目的是与modular-grad-div scheme作比较
+//这里主要测试关于压力的强健性
+//可以分别实现经典projection scheme 和 penalty-projection scheme
+
+real epsi = 1.0e-6;
+real Nu = 1.;//grad-div稳定化参数
+//real beta = 0.01;//时间导数项上的grad-div稳定化参数
+real T = 1.;
+
+int MM = 7;
+
+real[int] eeruL2(MM),eeruL2inf(MM),eeruH1(MM),eerudiv(MM),eerudivinf(MM),eerpL2(MM),eerpL2inf(MM);
+real[int] eeruuL2(MM),eeruuL2inf(MM),eeruuH1(MM),eeruudiv(MM),eeruudivinf(MM);
+//real[int] eeruuuL2(MM),eeruuuL2inf(MM),eeruuudiv(MM),eeruuudivinf(MM);
+
+  
+for(int kk =1; kk<= MM;kk++){
+real nu = 10^(kk-1);//粘性系数改变
+
+int NN = 32;//网格剖分
+real h = 1./NN; //固定网格尺寸
+ 
+
+real dt = 1./(NN  ); //时间要选取dt=h^2为了保证相同的收敛阶
+
+real GuL2error = 0, GuL2errorinf = 0, GuH1error = 0, Gudiverrorinf = 0, Gudiverror = 0, GpL2error = 0,GpL2errorinf = 0;
+real GuuL2error = 0, GuuL2errorinf = 0, GuuH1error = 0, Guudiverrorinf = 0, Guudiverror = 0;;
+//real GuuuL2error = 0, GuuuL2errorinf = 0, GuuuH1error = 0, Guuudiverrorinf = 0, Guuudiverror = 0;
+
+
+
+mesh Th = square(NN,NN);
+fespace Vh(Th,P2); 
+fespace Mh(Th,P1);
+
+Vh u1,u2,uu1,uu2,uuu1,uuu2;//end速度,第一个中间速度,第二个中间速度
+Vh u01,u02;//初始值以及存储modular-grad-div处理后的结果因为对流项要用
+Vh v1,v2;
+Vh u1old, u2old;//end-velocity
+Vh bu1,bu2;//速度边界条件
+
+
+Mh p,p0,pCor,q;//压力，压力初始值，压力校正量
+Mh pold;
+Mh bp;//压力的边界条件
+
+
+
+
+matrix dtM1x, dtM1y;
+
+macro  BuildMat()
+  { /* for memory managenemt */
+    varf vdx(q, v1) = int2d(Th)(v1*dx(q)*dt) ;
+    varf vdy(q, v1) = int2d(Th)(v1*dy(q)*dt) ;
+
+    matrix Mdx = vdx(Mh, Vh);
+    matrix Mdy = vdy(Mh, Vh);
+    dtM1x = Mdx;
+    dtM1y = Mdy;
+  }//
+
+BuildMat
+
+
+real cpu1 = clock();
+real t = 0;
+
+//边界为0
+//func real u1ee(real t){
+//return sin(t)*sin(pi*x)*sin(pi*x)*sin(2*pi*y);
+//}
+
+//func real u2ee(real t){
+//return -sin(t)*sin(2*pi*x)*sin(pi*y)*sin(pi*y);
+//}
+
+//func real pee(real t){
+//return sin(t)*(sin(pi*y)- 2./pi);
+//}
+
+
+//算例3
+func real u1ee(real t){
+return 1.6*( 6+ 4*cos(4*t) )*sin(pi*x) *sin(pi*x)*y*(y-1)*(2*y-1);
+}
+
+func real u2ee(real t){
+return -0.8*pi*( 6+ 4*cos(4*t) )*sin(2*pi*x)* y^2 *(y-1)^2;
+}
+
+func real pee(real t){
+return 0.1*( 6+ 4*cos(4*t) )*sin(pi*x)*cos(pi*y);
+}
+
+
+
+u01 = u1ee(0); u02 = u2ee(0);//initial value
+uu1 = u1ee(0); uu2 = u2ee(0);//initial value中间速度用作对流速度
+u1old = u1ee(0); u2old = u2ee(0);//initial value
+p0 = pee(0);
+pold = pee(0);
+
+for(int k = 1;k <= T/dt;k++){
+t = k*dt;
+
+//边界为0
+//func u1e = sin(t)*sin(pi*x)*sin(pi*x)*sin(2*pi*y);
+//func u2e = -sin(t)*sin(2*pi*x)*sin(pi*y)*sin(pi*y);
+//func pe = sin(t)*(sin(pi*y)- 2./pi);
+
+//func u1x = 2*pi*sin(t)*cos(pi*x)*sin(pi*x)*sin(2*pi*y);
+//func u1y = 2*pi*sin(t)*sin(pi*x)*sin(pi*x)*cos(2*pi*y);
+
+//func u2x = -2*pi*sin(t)*cos(2*pi*x)*sin(pi*y)*sin(pi*y);
+//func u2y = -2*pi*sin(t)*sin(2*pi*x)*sin(pi*y)*cos(pi*y);
+
+//func pex = 0;
+//func pey = sin(t)*pi*cos(pi*y);
+
+//func f1 = cos(t)*sin(pi*x)*sin(pi*x)*sin(2*pi*y) - nu*2*pi*sin(t)*sin(2*pi*y)*(pi*cos(pi*x)*cos(pi*x) - pi*sin(pi*x)*sin(pi*x) -2*pi*sin(2*pi*y)) + (sin(t)*sin(pi*x)*sin(pi*x)*sin(2*pi*y))*(2*pi*sin(t)*cos(pi*x)*sin(pi*x)*sin(2*pi*y) ) + (-sin(t)*sin(2*pi*x)*sin(pi*y)*sin(pi*y) )*(2*pi*sin(t)*sin(pi*x)*sin(pi*x)*cos(2*pi*y) );   
+//func f2 = -cos(t)*sin(2*pi*x)*sin(pi*y)*sin(pi*y) - nu*2*pi*sin(t)*sin(2*pi*x)*( 2*pi*sin(pi*y)*sin(pi*y) -pi*(cos(pi*y)*cos(pi*y)) - sin(pi*y)*sin(pi*y)  ) + (sin(t)*sin(pi*x)*sin(pi*x)*sin(2*pi*y) )*(-2*pi*sin(t)*cos(2*pi*x)*sin(pi*y)*sin(pi*y) ) + (-sin(t)*sin(2*pi*x)*sin(pi*y)*sin(pi*y) )*(-2*pi*sin(t)*sin(2*pi*x)*sin(pi*y)*cos(pi*y) ) + sin(t)*pi*cos(pi*y);
+
+//算例3
+func u1e = 1.6*( 6+ 4*cos(4*t) )*sin(pi*x) *sin(pi*x)*y*(y-1)*(2*y-1);
+func u2e = -0.8*pi*( 6+ 4*cos(4*t) )*sin(2*pi*x)* y^2 *(y-1)^2;
+func pe = 0.1*( 6+ 4*cos(4*t) )*sin(pi*x)*cos(pi*y);
+
+func u1x = 1.6*( 6+ 4*cos(4*t) )*y*(y-1)*(2*y-1)*( 2*sin(pi*x)*pi*cos(pi*x) );
+func u1y = 1.6*( 6+ 4*cos(4*t) )*sin(pi*x)*sin(pi*x) *( (2*y -1)*(2*y -1)+ (y^2 -y)*2 );
+
+func u2x = -0.8*pi*( 6+ 4*cos(4*t) )* y^2 *(y-1)^2 *( 2*pi*cos(2*pi*x) );
+func u2y = -0.8*pi*( 6+ 4*cos(4*t) )*sin(2*pi*x)* ( 2*y*(y-1)^2 + y^2 *2*(y-1) );
+
+func f1 = 1.6*( -4*4*sin(4*t) )*sin(pi*x) *sin(pi*x)*y*(y-1)*(2*y-1) + 0.1*( 6+ 4*cos(4*t) )*pi*cos(pi*x)*cos(pi*y) - nu*( 1.6*( 6+ 4*cos(4*t) )*y*(y-1)*(2*y-1)*( 2*pi*pi*cos(2*pi*x)  ) ) -nu*1.6*( 6+ 4*cos(4*t) )*sin(pi*x)*sin(pi*x) *( 8*y -4 + 2*(2*y-1) ) + ( 1.6*( 6+ 4*cos(4*t) )*sin(pi*x) *sin(pi*x)*y*(y-1)*(2*y-1) )*( 1.6*( 6+ 4*cos(4*t) )*y*(y-1)*(2*y-1)*( 2*sin(pi*x)*pi*cos(pi*x) ) ) + ( -0.8*pi*( 6+ 4*cos(4*t) )*sin(2*pi*x)* y^2 *(y-1)^2 )*( 1.6*( 6+ 4*cos(4*t) )*sin(pi*x)*sin(pi*x) *( (2*y -1)*(2*y -1)+ (y^2 -y)*2 ) ); 
+func f2 = -0.8*pi*( -4*4*sin(4*t) )*sin(2*pi*x)* y^2 *(y-1)^2 - 0.1*( 6+ 4*cos(4*t) )*sin(pi*x)*pi*sin(pi*y) -nu*( -0.8*pi*( 6+ 4*cos(4*t) )* y^2 *(y-1)^2 *( -2*pi*2*pi*sin(2*pi*x) ) ) -nu*( -0.8*pi*( 6+ 4*cos(4*t) )*sin(2*pi*x)* ( 2*(y-1)^2 + 4*y*(y-1) + 4*y*(y-1) + 2*y^2 ) ) + ( 1.6*( 6+ 4*cos(4*t) )*sin(pi*x) *sin(pi*x)*y*(y-1)*(2*y-1) )*( -0.8*pi*( 6+ 4*cos(4*t) )* y^2 *(y-1)^2 *( 2*pi*cos(2*pi*x) ) ) + ( -0.8*pi*( 6+ 4*cos(4*t) )*sin(2*pi*x)* y^2 *(y-1)^2 )*( -0.8*pi*( 6+ 4*cos(4*t) )*sin(2*pi*x)* ( 2*y*(y-1)^2 + y^2 *2*(y-1) ) );
+
+
+//这是经典projection scheme + grad-div
+//由于grad-div term的加入是的速度分量耦合在一起
+problem proGradDiv([uu1,uu2],[v1,v2],solver = UMFPACK) = 
+   int2d(Th)( 1/dt *( uu1*v1 + uu2*v2 ) )
+   +int2d(Th)(nu *( dx(uu1)*dx(v1) + dy(uu1)*dy(v1) + dx(uu2)*dx(v2) + dy(uu2)*dy(v2) ))//扩散项
+   +int2d(Th)( (u01*dx(uu1) + u02*dy(uu1))*v1 + (u01*dx(uu2) + u02*dy(uu2))*v2 )//对流项
+   +int2d(Th)( 1./2 *(dx(u01) + dy(u02))*uu1*v1 )
+   +int2d(Th)( 1./2 *(dx(u01) + dy(u02))*uu2*v2 )
+   //+int2d(Th)( Nu*( dx(uu1)*dx(v1) + dx(uu1)*dy(v2) + dy(uu2)*dx(v1) + dy(uu2)*dy(v2) ) )//grad-div term
+   -int2d(Th)( 1./dt *( u1old*v1 + u2old*v2 ) )
+   -int2d(Th)( f1*v1 + f2*v2 )
+   +on(1,2,3,4,uu1 = 0,uu2 = 0);
+
+
+
+//形成压力的椭圆方程，需要特别注意边界条件的处理
+problem proMgdp(p,q,solver = UMFPACK) = 
+   int2d(Th)( dx(p)*dx(q) + dy(p)*dy(q) )
+   +int2d(Th)(1./dt *( dx(uu1) + dy(uu2) )*q )//施加齐次Neumann边界条件
+   //+on(3,p = bp)//注意这里施加的边界条件
+   ;
+
+
+
+//bp = pe;//p的边界条件
+
+proGradDiv;
+proMgdp;
+
+p = p - int2d(Th)(p);//后处理使压力均值为0;
+
+//uuu1[] = uu1[] + dtM1x*pCor[];//计算中间速度
+//uuu2[] = uu2[] + dtM1y*pCor[];//计算中间速度
+u1 = uu1 - dt*dx(p);//计算end-velocity
+u2 = uu2 - dt*dy(p);//计算end-velocity
+
+
+u1old = u1;
+u2old = u2;
+u01 = uu1;//传递grad-div处理后的结果
+u02 = uu2;//传递grad-div处理后的值
+
+
+real uL2error;
+uL2error = int2d(Th)((u1-u1e)^2+(u2-u2e)^2);
+
+real uuL2error;
+uuL2error = int2d(Th)((uu1-u1e)^2+(uu2-u2e)^2);
+
+
+real uH1error;
+uH1error = int2d(Th)((dx(u1)-u1x)^2+(dx(u2)-u2x)^2+(dy(u1)-u1y)^2+(dy(u2)-u2y)^2);//H1半范
+
+
+real uuH1error;
+uuH1error = int2d(Th)((dx(uu1)-u1x)^2+(dx(uu2)-u2x)^2+(dy(uu1)-u1y)^2+(dy(uu2)-u2y)^2);//H1半范
+
+
+real pL2error;
+pL2error = int2d(Th)((p-pe)^2);
+
+real udiverror;
+udiverror = int2d(Th)( ( u1x-dx(u1) + u2y - dy(u2) )^2 );
+
+real uudiverror;
+uudiverror = int2d(Th)( ( u1x-dx(uu1) + u2y - dy(uu2) )^2 );
+//udiverror = int2d(Th)( dx(u1e)^2 + dx(u1)^2 - 2*dx(u1e)*dx(u1)^2  );
+
+
+GuL2error = GuL2error + dt*uL2error;
+GuuL2error = GuuL2error + dt*uuL2error;
+
+GuH1error = GuH1error + dt*uH1error;
+GuuH1error = GuuH1error + dt*uuH1error;
+
+Gudiverror = Gudiverror + dt*udiverror;
+Guudiverror = Guudiverror + dt*uudiverror;
+
+GpL2error = GpL2error + dt*pL2error;
+
+if(GuL2errorinf <= sqrt(uL2error))//uLinfL2-error
+{
+GuL2errorinf = sqrt(uL2error);
+}
+
+if(GuuL2errorinf <= sqrt(uuL2error))//uLinfL2-error
+{
+GuuL2errorinf = sqrt(uuL2error);
+}
+
+if(Gudiverrorinf <= sqrt(udiverror))//uLinfL2-error
+{
+Gudiverrorinf = sqrt(udiverror);
+}
+
+if(Guudiverrorinf <= sqrt(uudiverror))//uLinfL2-error
+{
+Guudiverrorinf = sqrt(uudiverror);
+}
+
+
+if(GpL2errorinf <= sqrt(pL2error))
+{
+GpL2errorinf = sqrt(pL2error);
+}
+
+
+
+}//时间循环结束
+
+
+real GuL2 = sqrt(GuL2error);
+real GuuL2 = sqrt(GuuL2error);
+real GpL2 = sqrt(GpL2error);
+
+real GuH1 = sqrt(GuH1error);
+real GuuH1 = sqrt(GuuH1error);
+real Gudiv = sqrt(Gudiverror);
+real Guudiv = sqrt(Guudiverror);
+
+real GuL2inf = GuL2errorinf;
+real GuuL2inf = GuuL2errorinf;
+real Gudivinf = Gudiverrorinf;
+real Guudivinf = Guudiverrorinf;
+real GpL2inf = GpL2errorinf;
+
+
+
+
+eeruL2[kk-1]=GuL2;   
+eeruuL2[kk-1]=GuuL2;
+
+eeruH1[kk-1]=GuH1;
+eeruuH1[kk-1]=GuuH1;
+eerudiv[kk-1] = Gudiv;
+eeruudiv[kk-1] = Guudiv;
+eerpL2[kk-1]= GpL2;
+
+eeruL2inf[kk-1]=GuL2inf;
+eeruuL2inf[kk-1]=GuuL2inf;
+eerudivinf[kk-1]=Gudivinf;
+eeruudivinf[kk-1]=Guudivinf;
+eerpL2inf[kk-1]=GpL2inf;
+
+
+
+}//空间循环结束
+
+//for(int i=0;i<=MM-1;i++){
+//cout<<"eeruL2: "<<eeruL2[i]<<"   "<<"eeruuL2: "<<eeruuL2[i]<<"   "<<"eeruL2inf: "<<eeruL2inf[i]<<"  "<<"eeruuL2inf: "<<eeruuL2inf[i]<<"  "<<"eeruH1: "<<eeruH1[i]<<"  "<<"eeruuH1: "<<eeruuH1[i]<<"  "<<"eerudiv: "<<eerudiv[i]<<"  "<<"eerudivinf: "<<eerudivinf[i]<<"  "<<"eeruudiv: "<<eeruudiv[i]<<"  "<<"eeruudivinf: "<<eeruudivinf[i]<<"  "<<"eerpL2: "<<eerpL2[i]<<"   "<<"eerpL2inf: "<<eerpL2inf[i]<<endl;
+//}
+
+for(int i=0;i<=MM-1;i++){
+cout<<"eeruL2inf: "<<eeruL2inf[i]<<"  "<<"eerudiv: "<<eerudiv[i]<<"  "<<"eeruH1: "<<eeruH1[i]<<endl;
+}
+
+
+
